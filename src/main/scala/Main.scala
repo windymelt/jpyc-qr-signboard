@@ -231,6 +231,29 @@ object HtmlTemplate:
       font-family: 'Courier New', Courier, monospace;
     }
 
+    .main-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2rem;
+      width: 100%;
+    }
+
+    .qr-section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    @media (min-width: 760px) and (max-height: 768px) {
+      .main-content {
+        flex-direction: row;
+        align-items: flex-start;
+        justify-content: center;
+        gap: 3rem;
+      }
+    }
+
     .scan-instruction {
       margin-bottom: 1rem;
       text-align: center;
@@ -261,16 +284,19 @@ object HtmlTemplate:
 <body>
   <h1>${escape(cfg.title)}</h1>
 
-  <div class="scan-instruction">
-    <span class="primary">ウォレットアプリのスキャン機能で読み取ってください</span>
-    <span class="secondary">カメラアプリではなく MetaMask・Trust Wallet 等のアプリ内スキャナーをご利用ください</span>
-  </div>
+  <div class="main-content">
+    <div class="qr-section">
+      <div class="scan-instruction">
+        <span class="primary">ウォレットアプリのスキャン機能で読み取ってください</span>
+        <span class="secondary">カメラアプリではなく MetaMask・Trust Wallet 等のアプリ内スキャナーをご利用ください</span>
+      </div>
 
-  <div class="qr-wrapper">
-    <div id="qr"><div class="qr-loading">読み込み中...</div></div>
-  </div>
+      <div class="qr-wrapper">
+        <div id="qr"><div class="qr-loading">読み込み中...</div></div>
+      </div>
+    </div>
 
-  <div class="info-card">
+    <div class="info-card">
     <div class="info-row">
       <span class="info-label">支払い金額</span>
       <span class="info-value highlight" id="amount-display">${escape(amountLine)}</span>
@@ -309,6 +335,7 @@ object HtmlTemplate:
       </div>
     </div>
     <div class="uri-row" id="uri-display">読み込み中...</div>
+  </div>
   </div>
 
   <footer>ERC-681 / Scan with a Web3 wallet app &nbsp;|&nbsp; <a href="https://github.com/windymelt/jpyc-qr-signboard" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline;text-underline-offset:3px;">github.com/windymelt/jpyc-qr-signboard</a></footer>
@@ -542,7 +569,7 @@ object HtmlTemplate:
         QRCode.toCanvas(
           uri,
           {
-            width: Math.min(Math.max(window.innerWidth * 0.55, 200), 420),
+            width: Math.min(Math.max(window.innerWidth * 0.55, 200), 320),
             margin: 0,
             color: { dark: '#000000', light: '#ffffff' },
             errorCorrectionLevel: 'M',
