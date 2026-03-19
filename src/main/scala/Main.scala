@@ -53,7 +53,7 @@ object HtmlTemplate:
   def render(cfg: Config): String =
     val amountLine = cfg.amount match
       case None         => "（金額は送信者が指定）"
-      case Some(amount) => s"${amount.setScale(0, BigDecimal.RoundingMode.DOWN)} トークン"
+      case Some(amount) => s"${amount.setScale(0, BigDecimal.RoundingMode.DOWN)} XXX"
 
     val chainLine = cfg.chainId match
       case None     => "（チェーン未指定）"
@@ -162,7 +162,7 @@ object HtmlTemplate:
 
     .address-with-icon {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       gap: 0.75rem;
       margin-top: 0.15rem;
     }
@@ -296,16 +296,22 @@ object HtmlTemplate:
     </div>
     <div class="info-row">
       <span class="info-label">トークンコントラクト</span>
-      <span class="info-value">${escape(cfg.tokenAddress)}</span>
+      <div class="address-texts">
+        <span class="ens-name" id="token-name">読み込み中...</span>
+        <span class="resolved-addr">${escape(cfg.tokenAddress)}</span>
+      </div>
     </div>
     <div class="info-row">
       <span class="info-label">ネットワーク</span>
-      <span class="info-value" id="chain-name">${escape(chainLine)}</span>
+      <div class="address-texts">
+        <span class="ens-name" id="chain-name">読み込み中...</span>
+        ${cfg.chainId.fold("")(id => s"""<span class="resolved-addr">Chain ID: $id</span>""")}
+      </div>
     </div>
     <div class="uri-row" id="uri-display">読み込み中...</div>
   </div>
 
-  <footer>ERC-681 / Scan with a Web3 wallet app</footer>
+  <footer>ERC-681 / Scan with a Web3 wallet app &nbsp;|&nbsp; <a href="https://github.com/windymelt/jpyc-qr-signboard" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline;text-underline-offset:3px;">github.com/windymelt/jpyc-qr-signboard</a></footer>
 
   <script type="module">
     import jazzicon from 'https://esm.sh/@metamask/jazzicon';
@@ -468,9 +474,10 @@ object HtmlTemplate:
       );
     }
 
-    // Call symbol() and decimals() on the ERC-20 token contract.
+    // Call name(), symbol() and decimals() on the ERC-20 token contract.
     async function fetchTokenInfo(rpcs, tokenAddress) {
       const abi = [
+        'function name() view returns (string)',
         'function symbol() view returns (string)',
         'function decimals() view returns (uint8)',
       ];
@@ -478,11 +485,12 @@ object HtmlTemplate:
         try {
           const provider = new ethers.JsonRpcProvider(rpc);
           const contract = new ethers.Contract(tokenAddress, abi, provider);
-          const [symbol, decimals] = await Promise.all([
+          const [name, symbol, decimals] = await Promise.all([
+            contract.name(),
             contract.symbol(),
             contract.decimals(),
           ]);
-          return { symbol: String(symbol), decimals: Number(decimals) };
+          return { name: String(name), symbol: String(symbol), decimals: Number(decimals) };
         } catch {
           continue;
         }
@@ -505,10 +513,8 @@ object HtmlTemplate:
 
       // Wait for chain data so we can fetch token info (decimals).
       const chainData = await chainDataPromise;
-      if (chainData?.name) {
-        document.getElementById('chain-name').textContent =
-          `$${chainData.name} ($${CHAIN_ID})`;
-      }
+      document.getElementById('chain-name').textContent =
+        chainData?.name ?? (CHAIN_ID != null ? `Chain ID: $${CHAIN_ID}` : '（チェーン未指定）');
 
       // Fetch token symbol + decimals from the chain's public RPCs.
       const rpcs = publicRpcs(chainData);
@@ -520,9 +526,12 @@ object HtmlTemplate:
       const decimals  = tokenInfo?.decimals ?? DECIMALS_FALLBACK;
       const amountStr = AMOUNT_HUMAN != null ? `$${AMOUNT_HUMAN}e$${decimals}` : null;
 
-      if (tokenInfo != null && AMOUNT_HUMAN != null) {
-        document.getElementById('amount-display').textContent =
-          `$${AMOUNT_HUMAN} $${tokenInfo.symbol}`;
+      if (tokenInfo != null) {
+        if (AMOUNT_HUMAN != null) {
+          document.getElementById('amount-display').textContent =
+            `$${AMOUNT_HUMAN} $${tokenInfo.symbol}`;
+        }
+        document.getElementById('token-name').textContent = tokenInfo.name;
       }
 
       // Build final URI (with correct decimals) and render QR code.
