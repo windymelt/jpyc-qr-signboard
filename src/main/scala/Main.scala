@@ -63,15 +63,11 @@ object HtmlTemplate:
     val jsTo          = jsonString(cfg.recipientAddress)
     val jsToken       = jsonString(cfg.tokenAddress)
     val jsChainId     = cfg.chainId.fold("null")(_.toString)
-    val jsAmount      = cfg.amount match
-      case None => "null"
-      case Some(human) =>
-        val s = human.underlying.stripTrailingZeros.toPlainString
-        jsonString(s"${s}e${cfg.decimals}")
-    val jsAmountHuman = cfg.amount match
+    val jsAmountHuman     = cfg.amount match
       case None        => "null"
       case Some(human) => jsonString(human.underlying.stripTrailingZeros.toPlainString)
-    val jsRpc         = jsonString(cfg.ethRpc)
+    val jsDecimalsFallback = cfg.decimals.toString
+    val jsRpc              = jsonString(cfg.ethRpc)
 
     s"""<!DOCTYPE html>
 <html lang="ja">
@@ -286,21 +282,21 @@ object HtmlTemplate:
     import jazzicon from 'https://esm.sh/@metamask/jazzicon';
     import { ethers }  from 'https://esm.sh/ethers@6';
 
-    const TO_PARAM      = $jsTo;
-    const TOKEN_ADDRESS = $jsToken;
-    const CHAIN_ID      = $jsChainId;
-    const AMOUNT_STR    = $jsAmount;
-    const AMOUNT_HUMAN  = $jsAmountHuman;
-    const ETH_RPC       = $jsRpc;
+    const TO_PARAM         = $jsTo;
+    const TOKEN_ADDRESS    = $jsToken;
+    const CHAIN_ID         = $jsChainId;
+    const AMOUNT_HUMAN     = $jsAmountHuman;
+    const DECIMALS_FALLBACK = $jsDecimalsFallback;
+    const ETH_RPC          = $jsRpc;
 
     function isEns(addr) {
       return !/^0x[0-9a-fA-F]{40}$$/i.test(addr);
     }
 
-    function buildUri(resolvedTo) {
+    function buildUri(resolvedTo, amountStr) {
       const chainPart = CHAIN_ID != null ? `@$${CHAIN_ID}` : '';
       let uri = `ethereum:$${TOKEN_ADDRESS}$${chainPart}/transfer?address=$${resolvedTo}`;
-      if (AMOUNT_STR != null) uri += `&uint256=$${AMOUNT_STR}`;
+      if (amountStr != null) uri += `&uint256=$${amountStr}`;
       return uri;
     }
 
@@ -379,7 +375,7 @@ object HtmlTemplate:
     async function init() {
       let resolvedTo = TO_PARAM;
 
-      // Fetch chain data (name + RPCs) in parallel with ENS resolution.
+      // Start chain data fetch and ENS resolution in parallel.
       const chainDataPromise = fetchChainData(CHAIN_ID);
 
       if (isEns(TO_PARAM)) {
@@ -389,10 +385,32 @@ object HtmlTemplate:
         if (el) { el.textContent = resolvedTo; el.className = 'resolved-addr'; }
       }
 
-      const uri = buildUri(resolvedTo);
+      // Wait for chain data so we can fetch token info (decimals).
+      const chainData = await chainDataPromise;
+      if (chainData?.name) {
+        document.getElementById('chain-name').textContent =
+          `$${chainData.name} ($${CHAIN_ID})`;
+      }
+
+      // Fetch token symbol + decimals from the chain's public RPCs.
+      const rpcs = publicRpcs(chainData);
+      const tokenInfo = rpcs.length > 0
+        ? await fetchTokenInfo(rpcs, TOKEN_ADDRESS)
+        : null;
+
+      // Prefer on-chain decimals; fall back to the CLI --decimals value.
+      const decimals  = tokenInfo?.decimals ?? DECIMALS_FALLBACK;
+      const amountStr = AMOUNT_HUMAN != null ? `$${AMOUNT_HUMAN}e$${decimals}` : null;
+
+      if (tokenInfo != null && AMOUNT_HUMAN != null) {
+        document.getElementById('amount-display').textContent =
+          `$${AMOUNT_HUMAN} $${tokenInfo.symbol}`;
+      }
+
+      // Build final URI (with correct decimals) and render QR code.
+      const uri = buildUri(resolvedTo, amountStr);
       document.getElementById('uri-display').textContent = uri;
 
-      // QR code
       await new Promise((resolve, reject) => {
         QRCode.toCanvas(
           uri,
@@ -412,28 +430,11 @@ object HtmlTemplate:
         );
       });
 
-      // Jazzicon — uses the resolved Ethereum address as seed
+      // Jazzicon — uses the resolved Ethereum address as seed.
       const clean = resolvedTo.replace(/^0x/i, '');
       const seed  = parseInt(clean.slice(0, 8), 16);
       const icon  = jazzicon(48, seed);
       document.getElementById('jazzicon-to').appendChild(icon);
-
-      // Update chain name and fetch token info once chain data arrives.
-      const chainData = await chainDataPromise;
-      if (chainData?.name) {
-        document.getElementById('chain-name').textContent =
-          `$${chainData.name} ($${CHAIN_ID})`;
-      }
-
-      // Fetch token symbol/decimals from the chain's public RPCs.
-      const rpcs = publicRpcs(chainData);
-      if (rpcs.length > 0) {
-        const tokenInfo = await fetchTokenInfo(rpcs, TOKEN_ADDRESS);
-        if (tokenInfo && AMOUNT_HUMAN != null) {
-          document.getElementById('amount-display').textContent =
-            `$${AMOUNT_HUMAN} $${tokenInfo.symbol}`;
-        }
-      }
     }
 
     init().catch(err => {
@@ -553,7 +554,7 @@ object Server:
       val uri  = Erc681.transferUri(cfg)
       val html = HtmlTemplate.render(cfg)
 
-      println(s"ERC-681 URI (console only, ENS not resolved): $uri")
+      println(s"ERC-681 URI (console only; ENS and on-chain decimals not resolved): $uri")
 
       cfg.outputFile match
         case Some(path) =>
