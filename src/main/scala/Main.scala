@@ -167,12 +167,32 @@ object HtmlTemplate:
       margin-top: 0.15rem;
     }
 
-    #jazzicon-to {
+    .icons-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
       flex-shrink: 0;
+    }
+
+    .icon-slot {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.2rem;
+    }
+
+    .icon-label {
+      font-size: 0.6rem;
+      color: #5a5a7a;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    #jazzicon-to, #maskicon-to {
       width: 48px;
       height: 48px;
     }
-    #jazzicon-to > div {
+    #jazzicon-to > div, #maskicon-to {
       border-radius: 50%;
       overflow: hidden;
     }
@@ -258,7 +278,16 @@ object HtmlTemplate:
     <div class="info-row">
       <span class="info-label">送金先アドレス</span>
       <div class="address-with-icon">
-        <div id="jazzicon-to"></div>
+        <div class="icons-group">
+          <div class="icon-slot">
+            <div id="jazzicon-to"></div>
+            <span class="icon-label">Jazzicon</span>
+          </div>
+          <div class="icon-slot">
+            <div id="maskicon-to"></div>
+            <span class="icon-label">Maskicon</span>
+          </div>
+        </div>
         <div class="address-texts">
           ${addressDisplay(cfg.recipientAddress)}
         </div>
@@ -280,7 +309,96 @@ object HtmlTemplate:
 
   <script type="module">
     import jazzicon from 'https://esm.sh/@metamask/jazzicon';
-    import { ethers }  from 'https://esm.sh/ethers@6';
+    import { ethers } from 'https://esm.sh/ethers@6';
+
+    // ---------------------------------------------------------------------------
+    // Maskicon — ported from @metamask/design-system (MIT)
+    // https://github.com/MetaMask/metamask-design-system
+    // ---------------------------------------------------------------------------
+    const _neutralPairs = [
+      ['#FF5C16','#FCFCFC'],['#FF5C16','#131416'],['#D075FF','#FCFCFC'],['#D075FF','#131416'],
+      ['#BAF24A','#FCFCFC'],['#BAF24A','#131416'],['#89B0FF','#FCFCFC'],['#89B0FF','#131416'],
+      ['#FCFCFC','#FF5C16'],['#131416','#FF5C16'],['#FCFCFC','#D075FF'],['#131416','#D075FF'],
+      ['#FCFCFC','#BAF24A'],['#131416','#BAF24A'],['#FCFCFC','#89B0FF'],['#131416','#89B0FF'],
+    ];
+    const _tonalPairs = [
+      ['#FFA680','#FF5C16'],['#661800','#FF5C16'],['#EAC2FF','#D075FF'],['#3D065F','#D075FF'],
+      ['#E5FFC3','#BAF24A'],['#013330','#BAF24A'],['#CCE7FF','#89B0FF'],['#190066','#89B0FF'],
+      ['#FF5C16','#FFA680'],['#FF5C16','#661800'],['#D075FF','#EAC2FF'],['#D075FF','#3D065F'],
+      ['#BAF24A','#E5FFC3'],['#BAF24A','#013330'],['#89B0FF','#CCE7FF'],['#89B0FF','#190066'],
+      ['#661800','#FFA680'],['#FFA680','#661800'],['#3D065F','#EAC2FF'],['#EAC2FF','#3D065F'],
+      ['#013330','#E5FFC3'],['#E5FFC3','#013330'],['#190066','#CCE7FF'],['#CCE7FF','#190066'],
+    ];
+    const _complementaryPairs = [
+      ['#EAC2FF','#013330'],['#013330','#EAC2FF'],['#CCE7FF','#661800'],['#661800','#CCE7FF'],
+      ['#E5FFC3','#3D065F'],['#3D065F','#E5FFC3'],['#FFA680','#190066'],['#190066','#FFA680'],
+      ['#CCE7FF','#013330'],['#013330','#CCE7FF'],
+    ];
+    const _colorPairs = _neutralPairs.concat(_tonalPairs).concat(_complementaryPairs);
+
+    function _sdbmHash(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + (hash << 6) + (hash << 16) - hash;
+      }
+      return hash;
+    }
+
+    function _seedToString(seed) {
+      let hex = (typeof seed === 'number')
+        ? seed.toString(16)
+        : seed.map(b => b.toString(16).padStart(2, '0')).join('');
+      return hex.length < 6 ? hex.padEnd(6, '0') : hex;
+    }
+
+    function createMaskiconSVG(address, size = 100) {
+      const seed = /^0x/i.test(address)
+        ? parseInt(address.slice(2, 10), 16)
+        : Array.from(new TextEncoder().encode(address.normalize('NFKC').toLowerCase()));
+      const hashVal = _sdbmHash(_seedToString(seed));
+      const [bgColor, fgColor] = _colorPairs[Math.abs(hashVal) % _colorPairs.length];
+
+      const grid = 2, margin = size * 0.25;
+      const cellSize = (size - 2 * margin) / grid;
+      let pathData = '';
+      const filled = Array.from({ length: grid }, () => Array(grid).fill(false));
+      const sx = Math.floor(grid / 2), sy = Math.floor(grid / 2);
+      const stack = [[sx, sy]];
+      filled[sx][sy] = true;
+
+      while (stack.length > 0) {
+        const [x, y] = stack.pop();
+        const ch = Math.abs(hashVal >> (x * 3 + y * 5)) & 15;
+        const neighbors = [];
+        for (const [dx, dy] of [[0,1],[1,0],[0,-1],[-1,0]]) {
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && nx < grid && ny >= 0 && ny < grid && !filled[nx][ny]) {
+            neighbors.push([nx, ny]);
+          }
+        }
+        while (neighbors.length > 0) {
+          const idx = Math.abs(ch + neighbors.length) % neighbors.length;
+          const [nx, ny] = neighbors.splice(idx, 1)[0];
+          stack.push([nx, ny]);
+          filled[nx][ny] = true;
+        }
+        const rot = (ch % 4) * 90;
+        const cx = margin + x * cellSize, cy = margin + y * cellSize;
+        if (ch % 5 === 0) {
+          pathData += `M$${cx},$${cy} h$${cellSize} v$${cellSize} h-$${cellSize}z `;
+        } else if (rot === 0) {
+          pathData += `M$${cx},$${cy} h$${cellSize} v$${cellSize}z `;
+        } else if (rot === 90) {
+          pathData += `M$${cx + cellSize},$${cy} v$${cellSize} h-$${cellSize}z `;
+        } else if (rot === 180) {
+          pathData += `M$${cx + cellSize},$${cy + cellSize} h-$${cellSize} v-$${cellSize}z `;
+        } else {
+          pathData += `M$${cx},$${cy + cellSize} v-$${cellSize} h$${cellSize}z `;
+        }
+      }
+      return `<svg width="$${size}" height="$${size}" viewBox="0 0 $${size} $${size}" xmlns="http://www.w3.org/2000/svg"><rect width="$${size}" height="$${size}" fill="$${bgColor}"/><path d="$${pathData}" fill="$${fgColor}"/></svg>`;
+    }
+    // ---------------------------------------------------------------------------
 
     const TO_PARAM         = $jsTo;
     const TOKEN_ADDRESS    = $jsToken;
@@ -433,8 +551,10 @@ object HtmlTemplate:
       // Jazzicon — uses the resolved Ethereum address as seed.
       const clean = resolvedTo.replace(/^0x/i, '');
       const seed  = parseInt(clean.slice(0, 8), 16);
-      const icon  = jazzicon(48, seed);
-      document.getElementById('jazzicon-to').appendChild(icon);
+      document.getElementById('jazzicon-to').appendChild(jazzicon(48, seed));
+
+      // Maskicon — MetaMask design system identicon from the same resolved address.
+      document.getElementById('maskicon-to').innerHTML = createMaskiconSVG(resolvedTo, 48);
     }
 
     init().catch(err => {
