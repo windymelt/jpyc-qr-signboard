@@ -16,10 +16,11 @@ case class Config(
     port: Int = 8080,
     outputFile: Option[String] = None,
     title: String = "Token Payment",
+    ethRpc: String = "https://cloudflare-eth.com",
 )
 
 // ---------------------------------------------------------------------------
-// ERC-681 URI builder
+// ERC-681 URI builder (server-side, for console display only)
 // ---------------------------------------------------------------------------
 
 object Erc681:
@@ -30,6 +31,10 @@ object Erc681:
     *
     * uint256 uses EIP-681 exponential notation: <amount>e<decimals>
     * e.g. 1000 JPYC (18 decimals) => uint256=1000e18
+    *
+    * Note: if recipientAddress is an ENS name, it is embedded as-is here
+    * (console only). The actual QR code URI is built client-side after
+    * ENS resolution.
     */
   def transferUri(cfg: Config): String =
     val chainPart = cfg.chainId.fold("")(id => s"@$id")
@@ -45,14 +50,28 @@ object Erc681:
 // ---------------------------------------------------------------------------
 
 object HtmlTemplate:
-  def render(cfg: Config, uri: String): String =
+  def render(cfg: Config): String =
     val amountLine = cfg.amount match
       case None         => "（金額は送信者が指定）"
       case Some(amount) => s"${amount.setScale(0, BigDecimal.RoundingMode.DOWN)} トークン"
 
     val chainLine = cfg.chainId match
       case None     => "（チェーン未指定）"
-      case Some(id) => s"Chain ID: $id"
+      case Some(id) => s"$id"
+
+    // JS values injected from Scala
+    val jsTo          = jsonString(cfg.recipientAddress)
+    val jsToken       = jsonString(cfg.tokenAddress)
+    val jsChainId     = cfg.chainId.fold("null")(_.toString)
+    val jsAmount      = cfg.amount match
+      case None => "null"
+      case Some(human) =>
+        val s = human.underlying.stripTrailingZeros.toPlainString
+        jsonString(s"${s}e${cfg.decimals}")
+    val jsAmountHuman = cfg.amount match
+      case None        => "null"
+      case Some(human) => jsonString(human.underlying.stripTrailingZeros.toPlainString)
+    val jsRpc         = jsonString(cfg.ethRpc)
 
     s"""<!DOCTYPE html>
 <html lang="ja">
@@ -91,26 +110,19 @@ object HtmlTemplate:
       padding: 1.5rem;
       box-shadow: 0 0 60px rgba(120, 80, 255, 0.35);
       margin-bottom: 2rem;
+      position: relative;
     }
 
     #qr canvas, #qr img { display: block; }
 
-    .address-with-icon {
+    .qr-loading {
+      width: 280px;
+      height: 280px;
       display: flex;
       align-items: center;
-      gap: 0.75rem;
-    }
-
-    #jazzicon-to > div {
-      border-radius: 50%;
-      overflow: hidden;
-      flex-shrink: 0;
-    }
-
-    .verify-note {
-      margin-top: 0.3rem;
-      font-size: 0.68rem;
-      color: #5a5a7a;
+      justify-content: center;
+      color: #aaa;
+      font-size: 0.85rem;
     }
 
     .info-card {
@@ -152,6 +164,46 @@ object HtmlTemplate:
       font-weight: 600;
     }
 
+    .address-with-icon {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      margin-top: 0.15rem;
+    }
+
+    #jazzicon-to {
+      flex-shrink: 0;
+      width: 48px;
+      height: 48px;
+    }
+    #jazzicon-to > div {
+      border-radius: 50%;
+      overflow: hidden;
+    }
+
+    .address-texts { display: flex; flex-direction: column; gap: 0.2rem; }
+
+    .ens-name {
+      font-size: 1rem;
+      color: #c8c8e0;
+      font-weight: 600;
+    }
+
+    .resolved-addr {
+      font-size: 0.78rem;
+      word-break: break-all;
+      color: #7878a0;
+      font-family: 'Courier New', Courier, monospace;
+    }
+
+    .resolved-addr.loading { color: #4a4a6a; font-style: italic; }
+
+    .verify-note {
+      margin-top: 0.35rem;
+      font-size: 0.68rem;
+      color: #5a5a7a;
+    }
+
     .uri-row {
       margin-top: 1.2rem;
       padding: 0.8rem;
@@ -161,6 +213,25 @@ object HtmlTemplate:
       word-break: break-all;
       color: #4a4a6a;
       font-family: 'Courier New', Courier, monospace;
+    }
+
+    .scan-instruction {
+      margin-bottom: 1rem;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .scan-instruction .primary {
+      font-size: clamp(0.95rem, 2.5vw, 1.15rem);
+      font-weight: 600;
+      color: #ffffff;
+    }
+
+    .scan-instruction .secondary {
+      font-size: clamp(0.72rem, 1.8vw, 0.85rem);
+      color: #6a6a8a;
     }
 
     footer {
@@ -174,20 +245,27 @@ object HtmlTemplate:
 <body>
   <h1>${escape(cfg.title)}</h1>
 
+  <div class="scan-instruction">
+    <span class="primary">ウォレットアプリのスキャン機能で読み取ってください</span>
+    <span class="secondary">カメラアプリではなく MetaMask・Trust Wallet 等のアプリ内スキャナーをご利用ください</span>
+  </div>
+
   <div class="qr-wrapper">
-    <canvas id="qr"></canvas>
+    <div id="qr"><div class="qr-loading">読み込み中...</div></div>
   </div>
 
   <div class="info-card">
     <div class="info-row">
       <span class="info-label">支払い金額</span>
-      <span class="info-value highlight">${escape(amountLine)}</span>
+      <span class="info-value highlight" id="amount-display">${escape(amountLine)}</span>
     </div>
     <div class="info-row">
       <span class="info-label">送金先アドレス</span>
       <div class="address-with-icon">
         <div id="jazzicon-to"></div>
-        <span class="info-value">${escape(cfg.recipientAddress)}</span>
+        <div class="address-texts">
+          ${addressDisplay(cfg.recipientAddress)}
+        </div>
       </div>
       <span class="verify-note">ウォレットアプリのアイコンと照合してください</span>
     </div>
@@ -197,37 +275,186 @@ object HtmlTemplate:
     </div>
     <div class="info-row">
       <span class="info-label">ネットワーク</span>
-      <span class="info-value">${escape(chainLine)}</span>
+      <span class="info-value" id="chain-name">${escape(chainLine)}</span>
     </div>
-    <div class="uri-row">${escape(uri)}</div>
+    <div class="uri-row" id="uri-display">読み込み中...</div>
   </div>
 
   <footer>ERC-681 / Scan with a Web3 wallet app</footer>
 
-  <script>
-    QRCode.toCanvas(
-      document.getElementById('qr'),
-      ${jsonString(uri)},
-      {
-        width: Math.min(Math.max(window.innerWidth * 0.55, 200), 420),
-        margin: 0,
-        color: { dark: '#000000', light: '#ffffff' },
-        errorCorrectionLevel: 'M',
-      },
-      function(err) { if (err) console.error(err); }
-    );
-  </script>
-
   <script type="module">
     import jazzicon from 'https://esm.sh/@metamask/jazzicon';
-    const addr = ${jsonString(cfg.recipientAddress)};
-    const clean = addr.replace(/^0x/i, '');
-    const seed  = parseInt(clean.slice(0, 8), 16);
-    const el    = jazzicon(48, seed);
-    document.getElementById('jazzicon-to').appendChild(el);
+    import { ethers }  from 'https://esm.sh/ethers@6';
+
+    const TO_PARAM      = $jsTo;
+    const TOKEN_ADDRESS = $jsToken;
+    const CHAIN_ID      = $jsChainId;
+    const AMOUNT_STR    = $jsAmount;
+    const AMOUNT_HUMAN  = $jsAmountHuman;
+    const ETH_RPC       = $jsRpc;
+
+    function isEns(addr) {
+      return !/^0x[0-9a-fA-F]{40}$$/i.test(addr);
+    }
+
+    function buildUri(resolvedTo) {
+      const chainPart = CHAIN_ID != null ? `@$${CHAIN_ID}` : '';
+      let uri = `ethereum:$${TOKEN_ADDRESS}$${chainPart}/transfer?address=$${resolvedTo}`;
+      if (AMOUNT_STR != null) uri += `&uint256=$${AMOUNT_STR}`;
+      return uri;
+    }
+
+    // ETH_RPC is tried first; if it fails, the built-in fallbacks are tried.
+    const FALLBACK_RPCS = [
+      ETH_RPC,
+      'https://rpc.ankr.com/eth',
+      'https://eth.llamarpc.com',
+      'https://ethereum.publicnode.com',
+      'https://1rpc.io/eth',
+    ].filter((v, i, a) => a.indexOf(v) === i); // deduplicate
+
+    async function resolveEns(name) {
+      let lastErr;
+      for (const rpc of FALLBACK_RPCS) {
+        try {
+          const provider = new ethers.JsonRpcProvider(rpc);
+          const addr = await provider.resolveName(name);
+          if (addr) return addr;
+          // resolveName returns null when name is not registered
+          throw new Error(`ENS名 "$${name}" はまだ登録されていません`);
+        } catch (e) {
+          lastErr = e;
+          // if the name is clearly unregistered, stop trying other RPCs
+          if (e.message.includes('登録されていません')) throw e;
+        }
+      }
+      throw new Error(
+        `ENS解決に失敗しました: $${lastErr?.message ?? '不明なエラー'}\n` +
+        `別のRPCを試す場合は --eth-rpc オプションで指定してください。`
+      );
+    }
+
+    // Fetch chain metadata (name, rpc URLs) from ethereum-lists via jsDelivr CDN.
+    async function fetchChainData(chainId) {
+      if (chainId == null) return null;
+      try {
+        const res = await fetch(
+          `https://cdn.jsdelivr.net/gh/ethereum-lists/chains/_data/chains/eip155-$${chainId}.json`
+        );
+        return res.ok ? await res.json() : null;
+      } catch {
+        return null;
+      }
+    }
+
+    // Return HTTP(S) RPC URLs that don't require an API key.
+    function publicRpcs(chainData) {
+      return (chainData?.rpc ?? []).filter(
+        r => typeof r === 'string' && r.startsWith('http') && !r.includes('$${')
+      );
+    }
+
+    // Call symbol() and decimals() on the ERC-20 token contract.
+    async function fetchTokenInfo(rpcs, tokenAddress) {
+      const abi = [
+        'function symbol() view returns (string)',
+        'function decimals() view returns (uint8)',
+      ];
+      for (const rpc of rpcs) {
+        try {
+          const provider = new ethers.JsonRpcProvider(rpc);
+          const contract = new ethers.Contract(tokenAddress, abi, provider);
+          const [symbol, decimals] = await Promise.all([
+            contract.symbol(),
+            contract.decimals(),
+          ]);
+          return { symbol: String(symbol), decimals: Number(decimals) };
+        } catch {
+          continue;
+        }
+      }
+      return null;
+    }
+
+    async function init() {
+      let resolvedTo = TO_PARAM;
+
+      // Fetch chain data (name + RPCs) in parallel with ENS resolution.
+      const chainDataPromise = fetchChainData(CHAIN_ID);
+
+      if (isEns(TO_PARAM)) {
+        const el = document.getElementById('resolved-addr');
+        if (el) { el.textContent = 'ENS解決中...'; el.className = 'resolved-addr loading'; }
+        resolvedTo = await resolveEns(TO_PARAM);
+        if (el) { el.textContent = resolvedTo; el.className = 'resolved-addr'; }
+      }
+
+      const uri = buildUri(resolvedTo);
+      document.getElementById('uri-display').textContent = uri;
+
+      // QR code
+      await new Promise((resolve, reject) => {
+        QRCode.toCanvas(
+          uri,
+          {
+            width: Math.min(Math.max(window.innerWidth * 0.55, 200), 420),
+            margin: 0,
+            color: { dark: '#000000', light: '#ffffff' },
+            errorCorrectionLevel: 'M',
+          },
+          (err, canvas) => {
+            if (err) { reject(err); return; }
+            const container = document.getElementById('qr');
+            container.innerHTML = '';
+            container.appendChild(canvas);
+            resolve();
+          }
+        );
+      });
+
+      // Jazzicon — uses the resolved Ethereum address as seed
+      const clean = resolvedTo.replace(/^0x/i, '');
+      const seed  = parseInt(clean.slice(0, 8), 16);
+      const icon  = jazzicon(48, seed);
+      document.getElementById('jazzicon-to').appendChild(icon);
+
+      // Update chain name and fetch token info once chain data arrives.
+      const chainData = await chainDataPromise;
+      if (chainData?.name) {
+        document.getElementById('chain-name').textContent =
+          `$${chainData.name} ($${CHAIN_ID})`;
+      }
+
+      // Fetch token symbol/decimals from the chain's public RPCs.
+      const rpcs = publicRpcs(chainData);
+      if (rpcs.length > 0) {
+        const tokenInfo = await fetchTokenInfo(rpcs, TOKEN_ADDRESS);
+        if (tokenInfo && AMOUNT_HUMAN != null) {
+          document.getElementById('amount-display').textContent =
+            `$${AMOUNT_HUMAN} $${tokenInfo.symbol}`;
+        }
+      }
+    }
+
+    init().catch(err => {
+      console.error(err);
+      document.getElementById('jazzicon-to').textContent = 'error';
+      document.getElementById('uri-display').textContent = 'エラー: ' + err.message;
+    });
   </script>
 </body>
 </html>"""
+
+  /** アドレス表示HTML。ENS名の場合は名前と解決済みアドレス欄を分けて表示する。 */
+  private def addressDisplay(addr: String): String =
+    if isEnsAddress(addr) then
+      s"""<span class="ens-name">${escape(addr)}</span>
+          <span class="resolved-addr loading" id="resolved-addr">ENS解決中...</span>"""
+    else
+      s"""<span class="info-value">${escape(addr)}</span>"""
+
+  private def isEnsAddress(addr: String): Boolean =
+    !addr.matches("0x[0-9a-fA-F]{40}")
 
   private def escape(s: String): String =
     s.replace("&", "&amp;")
@@ -280,9 +507,9 @@ object Server:
         .text("ERC-20 token contract address (required)"),
       opt[String]("to")
         .required()
-        .valueName("<recipient_address>")
+        .valueName("<address_or_ens>")
         .action((x, c) => c.copy(recipientAddress = x))
-        .text("Recipient wallet address (required)"),
+        .text("Recipient address or ENS name, e.g. 0x... or windymelt.eth (required)"),
       opt[String]("amount")
         .optional()
         .valueName("<amount>")
@@ -313,15 +540,20 @@ object Server:
         .valueName("<text>")
         .action((x, c) => c.copy(title = x))
         .text("Page title shown on signage (default: Token Payment)"),
+      opt[String]("eth-rpc")
+        .optional()
+        .valueName("<url>")
+        .action((x, c) => c.copy(ethRpc = x))
+        .text("Ethereum JSON-RPC URL for ENS resolution (default: https://cloudflare-eth.com)"),
     )
 
   OParser.parse(parser, args.toSeq, Config()) match
     case None => sys.exit(1)
     case Some(cfg) =>
       val uri  = Erc681.transferUri(cfg)
-      val html = HtmlTemplate.render(cfg, uri)
+      val html = HtmlTemplate.render(cfg)
 
-      println(s"ERC-681 URI: $uri")
+      println(s"ERC-681 URI (console only, ENS not resolved): $uri")
 
       cfg.outputFile match
         case Some(path) =>
