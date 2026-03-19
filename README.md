@@ -1,5 +1,7 @@
 # jpyc-qr-signboard
 
+![screenshot](image/screenshot.png)
+
 ERC-20トークンの支払いを受け付けるサイネージ用画面を生成するScala 3製CLIツールです。
 
 ERC-681 URIをQRコードとして表示し、MetaMaskなどのウォレットアプリでスキャンするだけで送金できます。
