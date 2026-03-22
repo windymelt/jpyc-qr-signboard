@@ -1,15 +1,3 @@
-val scala3Version = "3.3.3"
-
-lazy val root = project
-  .in(file("."))
-  .settings(
-    name         := "jpyc-qr-signboard",
-    scalaVersion := scala3Version,
-    libraryDependencies ++= Seq(
-      "com.github.scopt" %% "scopt" % "4.1.0"
-    )
-  )
-
 inThisBuild(List(
   organization := "dev.capslock",
   homepage := Some(url("https://github.com/windymelt/jpyc-qr-signboard")),
@@ -26,4 +14,16 @@ inThisBuild(List(
   ),
   versionScheme := Some("early-semver")
 ))
+
+val scala3Version = "3.3.3"
+
+lazy val root = project
+  .in(file("."))
+  .settings(
+    name         := "jpyc-qr-signboard",
+    scalaVersion := scala3Version,
+    libraryDependencies ++= Seq(
+      "com.github.scopt" %% "scopt" % "4.1.0"
+    )
+  )
 
