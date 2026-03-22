@@ -7,8 +7,7 @@ lazy val root = project
     scalaVersion := scala3Version,
     libraryDependencies ++= Seq(
       "com.github.scopt" %% "scopt" % "4.1.0"
-    ),
-    assembly / assemblyJarName := s"jpyc-qr-signboard-${version.value}.jar",
+    )
   )
 
 inThisBuild(List(
