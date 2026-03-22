@@ -9,6 +9,5 @@ lazy val root = project
     libraryDependencies ++= Seq(
       "com.github.scopt" %% "scopt" % "4.1.0"
     ),
-    // sbt-assembly でfat jarを作れるようにする
-    assembly / assemblyJarName := "jpyc-qr-signboard.jar",
+    assembly / assemblyJarName := s"jpyc-qr-signboard-${version.value}.jar",
   )
