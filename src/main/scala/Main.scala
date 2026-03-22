@@ -1,3 +1,5 @@
+package dev.capslock.jpycqrsignboard
+
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import java.net.InetSocketAddress
 import java.nio.file.{Files, Paths}
